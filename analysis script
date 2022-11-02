@@ -1,0 +1,105 @@
+#QTLSeq analysis.
+#After running the QTLseq script (https://github.com/YuSugihara/QTL-seq) find the .vcf.gz file in the output_folder/30_vcf/
+
+#------------------------------------------------------#
+#--------Preparation of files for for QTLseqr----------#
+#------------------------------------------------------#
+
+#SBATCH --partition=batch
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=myID@uga.edu
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
+#SBATCH --time=7-00:00:00
+
+ml BCFtools/1.15.1-GCC-10.2.0
+ml gzip/1.10-GCCcore-10.2.0
+
+#unzip the vcf file using Gzip
+gunzip qtlseq.vcf.gz
+
+# Prepare the SNP data for QTLseq pipeline
+bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t%QUAL\t%INFO/MQ[\t%GT][\t%AD]\n' qtlseq.vcf > genotype1.txt
+sed -e 's/,/\t/g' genotype1.txt > genotype2.txt
+grep -v  "\./\." genotype2.txt > genotype3.txt
+awk '{if($7=="0/0") print}' genotype3.txt > genotype4.txt
+awk '{if($11==0) print}' genotype4.txt > genotype5.txt
+awk '{if($10>=15 && $10<= 150) print}' genotype5.txt > genotype6.txt
+awk '{if(($12+$13)>=25 && ($12+$13)<=200) print}' genotype6.txt > genotype7.txt
+awk '{if(($14+$15)>=25 && ($14+$15)<=200) print}' genotype7.txt > genotype8.txt
+awk '{if ($8=="1/1" && $9=="1/1") next; else print}' genotype8.txt > genotype9.txt
+
+#After that transfer the "genotype9.txt" file to your machine
+
+
+#------------THIS IS DONE USING R------------#
+
+#In R, install the QTLseqr package (https://github.com/bmansfeld/QTLseqr)
+
+# install devtools first to download packages from github
+install.packages("devtools")
+
+# use devtools to install QTLseqr
+devtools::install_github("bmansfeld/QTLseqr")
+
+
+##First, we convert the .txt file to .tsv, extracting the needed columns
+#Loading the package
+library("QTLseqr")
+
+dat<-read.table("genotype9.txt",sep = "\t")
+df<-data.frame(CHROM = dat[,1],POS = dat[,2],REF = dat[,3],ALT = dat[,4],
+               AD_REF.LowBulk = dat[,14], AD_ALT.LowBulk = dat[,15],
+               AD_REF.HighBulk = dat[,12], AD_ALT.HighBulk = dat[,13]
+               )
+write.table(df, file = "pop.tsv", sep = "\t", row.names = F, quote = F)
+
+##### -> IMPORTANT: OPEN THE CREATED .TSV FILLE TO CHECK CHROMOSOME NAMES
+#The chromosome names should be in this specific format Chr#, e.g. Chr1, Chr2, Chr3
+
+#Next step is QTL-seq analysis (https://github.com/bmansfeld/QTLseqr)
+
+
+library("QTLseqr") 
+Chroms <- paste0(rep("Chr", 26), 1:26)
+
+df <- importFromTable(
+        file = "pop.tsv",
+        highBulk = "HighBulk",
+        lowBulk = "LowBulk",
+        chromList = Chroms, sep = "\t"
+     )    
+     
+df <-   filterSNPs(
+        SNPset = df,
+        minTotalDepth = 30,
+        maxTotalDepth = 400,
+        depthDifference = 200,
+        minSampleDepth = 25
+        )
+
+df <- runQTLseqAnalysis(
+    SNPset = df,
+    windowSize = 2e6,
+    popStruc = "F2",
+    bulkSize = c(30, 30),
+    replications = 10000,
+    intervals = c(95,99), maxk=300
+)
+
+# Write the results to file
+RESULTS <- getQTLTable(SNPset=df1, method = "QTLseq", interval = 99, export =  FALSE)
+write.table(RESULTS, file = "RESULTS.tsv", sep = "\t", row.names = F, quote = F)
+
+#Generate plots
+
+plotQTLStats(SNPset = df, var = "deltaSNP", plotIntervals = TRUE, subset = c("Chr1","Chr2", "Chr3","Chr4","Chr5"))
+plotQTLStats(SNPset = df, var = "deltaSNP", plotIntervals = TRUE, subset = c("Chr6","Chr7", "Chr8","Chr9","Chr10"))
+plotQTLStats(SNPset = df, var = "deltaSNP", plotIntervals = TRUE, subset = c("Chr11","Chr12", "Chr13","Chr14","Chr15"))
+plotQTLStats(SNPset = df, var = "deltaSNP", plotIntervals = TRUE, subset = c("Chr16","Chr17", "Chr18","Chr19","Chr20"))
+plotQTLStats(SNPset = df, var = "deltaSNP", plotIntervals = TRUE, subset = c("Chr21","Chr22", "Chr23","Chr24","Chr25","Chr26"))
+
+##The plots are done in separate for clarity
+
+## ----------------END---------------- ##
